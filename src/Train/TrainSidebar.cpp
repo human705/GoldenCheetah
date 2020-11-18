@@ -2505,6 +2505,11 @@ void TrainSidebar::FFwdLap()
         lapmarker = ergFileQueryAdapter.nextLap(displayWorkoutDistance*1000);
         if (lapmarker >= 0.) displayWorkoutDistance = lapmarker/1000; // jump forward to lapmarker
     }
+
+    updateMetricLapDistance();
+    updateMetricLapDistanceRemaining();
+
+    if (lapmarker >= 0) emit setNotification(tr("Next Lap.."), 2);
 }
 
 // higher load/gradient
