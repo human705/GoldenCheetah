@@ -195,7 +195,9 @@ public:
 
 };
 
-#if 0 // Simulated rider.
+//#if 0 // Simulated rider.
+
+
 // Class to wrap bicycle simulation and model its motion across a route.
 // This can be used to build simulated 'rabbits' to race along with an rlv rider.
 class SimulatedRider {
@@ -224,7 +226,8 @@ public:
     // Setters
     double& Watts()    { return m_watts; }
     double& Distance() { return m_distance; }
-    double& Slope()    { return m_slope;}                 // to provide slope when ergfile not present
+    double& Slope() { return m_slope; }
+    double& Speed() { return m_speed; }           // to provide slope when ergfile not present
 
     // Getters
     bool    HasLocation() const { return m_hasLocation; } // true if there is lon and lat
@@ -234,7 +237,39 @@ public:
     double  Longitude()   const { return m_longitude; }   // valid if hasLocation returns true.
     double  Altitude()    const { return m_altitude; }    // always present
     double  Slope()       const { return m_slope; }       // always present
+
 };
-#endif
+
+
+class RiderNest : public std::vector<SimulatedRider> {
+
+    Context* context;
+
+    typedef std::vector<SimulatedRider> basetype;
+
+public:
+
+    RiderNest(Context* c) : context(c) {}
+
+    SimulatedRider& at(size_t idx) { return this->basetype::at(idx); }
+    SimulatedRider& operator[](size_t idx) { return at(idx); }
+
+    const SimulatedRider& at(size_t idx) const { return this->basetype::at(idx); }
+    const SimulatedRider& operator[](size_t idx) const { return at(idx); }
+
+    size_t size() const { return this->basetype::size(); }
+
+    void resize(size_t newSize) {
+        this->basetype::resize(newSize, SimulatedRider(context));
+    }
+
+    void update(const ErgFile* ergFile) {
+        for (size_t i = 0; i < size(); i++)
+            at(i).UpdateSelf(ergFile);
+    }
+};
+
+
+//#endif // Simulated rider.
 
 #endif // BICYCLESIM_H
