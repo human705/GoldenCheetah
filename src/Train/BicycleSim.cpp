@@ -633,7 +633,7 @@ Bicycle::SampleSpeed(BicycleSimState &nowState)
     return { MsToKmh(out.v), out.d / 1000 };
 }
 
-#if 0 // SimulatedRider for future consolidation.
+//#if 0 // SimulatedRider for future consolidation.
 // Update state of rider along ergfile.
 void SimulatedRider::UpdateSelf(const ErgFile* ergFile) {
 
@@ -650,6 +650,8 @@ void SimulatedRider::UpdateSelf(const ErgFile* ergFile) {
             geolocation geoloc;
             if (m_ergFileAdapter.locationAt(m_distance * 1000, lap, geoloc, m_slope)) {
                 m_altitude = geoloc.Alt();
+                m_latitude = geoloc.Lat();
+                m_longitude = geoloc.Long();
                 m_hasLocation = true;
                 altitudeSet = true;
             }
@@ -676,4 +678,4 @@ void SimulatedRider::UpdateSelf(const ErgFile* ergFile) {
     m_speed = ret.v;
     m_distance += ret.d;
 }
-#endif
+//#endif
