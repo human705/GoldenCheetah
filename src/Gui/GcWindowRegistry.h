@@ -74,7 +74,8 @@ enum gcwinid {
         UserTrends=45,
         UserAnalysis=46,
         OverviewTrends=47,
-        LiveMapWebPageWindow = 48
+        LiveMapWebPageWindow = 48,
+        SimulatedRidersNestStats = 49
 
 };
 };
