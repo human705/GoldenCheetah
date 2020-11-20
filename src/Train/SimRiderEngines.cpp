@@ -15,7 +15,7 @@
  * with this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
-
+#pragma optimize("", off)
 #include "SimRiderEngines.h"
 #include <QSound>
 #include <QDebug>
@@ -43,6 +43,8 @@ SimRiderEngines::SimRiderEngines(Context* context) : simRider(context) {
     vDist = -999.;
     vWatts = -999.;
     engineType = 0;
+    savedTimer = 0.;
+    savedPower = 0.;
 
     //savedMaxSeparationLimit = 0; // meters
     isSimRiderWaiting = false;
@@ -154,10 +156,10 @@ void SimRiderEngines::runEngines(Context* context, double displayWorkoutDistance
                 double curDist = displayWorkoutDistance * 1000; // Use route distance to support skipping
                 double distDiff = (simRider.Distance() * 1000) - curDist;
                 if (!workoutFinished) {
-                    simRider.Watts() = SimRiderIntervalsEngine(curWatts, curDist, distDiff);
+                    simRider.Watts() = SimRiderIntervalsEngine(curWatts, curDist, distDiff, total_msecs);
                 }
                 else { // if simRider is done, set watts to 0
-                    simRider.Watts() = SimRiderIntervalsEngine(0, curDist, distDiff);
+                    simRider.Watts() = SimRiderIntervalsEngine(0, curDist, distDiff, total_msecs);
                 }
                 simRider.UpdateSelf(context->currentErgFile());
 
@@ -170,7 +172,7 @@ void SimRiderEngines::runEngines(Context* context, double displayWorkoutDistance
             else {
                 double curDist = displayWorkoutDistance * 1000; // Use route distance to support skipping
                 double distDiff = (simRider.Distance() * 1000) - curDist;
-                simRider.Watts() = SimRiderIntervalsEngine(0, curDist, distDiff);
+                simRider.Watts() = SimRiderIntervalsEngine(0, curDist, distDiff, total_msecs);
                 simRider.UpdateSelf(context->currentErgFile());
 
                 vLat = simRider.Latitude();
@@ -281,8 +283,19 @@ void SimRiderEngines::updateSimRiderData() {
 // Simple intervals engine for Simulated Riders.
 // Pace for the first x% of the ride.
 // Attack (add y watts) to the SimRider from the current user power for distance for z meters.
-double SimRiderEngines::SimRiderIntervalsEngine(double inPower, double currentDistance, double distDiff) {
+double SimRiderEngines::SimRiderIntervalsEngine(double inPower, double currentDistance, double distDiff, long total_msecs) {
 
+    if (savedPower == 0.) savedPower = inPower;
+    
+    if ((total_msecs - savedTimer) < 2000 && !isAttacking) {
+        return savedPower;
+    }
+    else {
+        savedTimer = total_msecs;
+        savedPower = inPower;
+    }
+    
+    
     double outPower = 0.;
 
     // if the user skip ahead or back we need to re-calculate our next attack point

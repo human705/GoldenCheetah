@@ -48,7 +48,7 @@ public:
     void buildAttackPointsList(int numOfAttacks, double rideDuration);
 
     //Sim Rider Intervals Engine
-    double SimRiderIntervalsEngine(double inPower, double currentDistance, double distDiff);
+    double SimRiderIntervalsEngine(double inPower, double currentDistance, double distDiff, long total_msecs);
     void initNewAtttackForIntervalsAI(double inPower);
     double setIntervalsAIPacingFields(double distDiff, double inPower);
     void setMaxSeparationLimit(double distDiff);
@@ -121,5 +121,7 @@ private:
     //ErgFile* curErgFile;
     //double workoutDuration;
     double vLat, vLon, vAlt, vDist, vWatts;
+    long savedTimer;
+    double savedPower;
 };
 #endif
