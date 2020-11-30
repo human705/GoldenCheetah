@@ -83,8 +83,11 @@ class LiveMapWebPageWindow : public GcChartWindow
         QVBoxLayout *layout;
         QComboBox* mapCombo;
 
+        QDir configDir;
+        QString vp1IconPath = "";
+
         QWebEngineView *view;
-        QWebEnginePage* webPage;
+        QWebEnginePage *webPage;
         LiveMapWebPageWindow();  // default ctor
         // setting dialog
         QLabel* customUrlLabel;
@@ -102,10 +105,12 @@ class LiveMapWebPageWindow : public GcChartWindow
 
         void createHtml(QString sBaseUrl, QString autoRunJS);
         void drawRoute(ErgFile* f);
+        SimRiderStateData localSrData;
 
     private slots:
         void telemetryUpdate(RealtimeData rtd);
         void stop();
+        void SimRiderStateUpdate(SimRiderStateData srData);
 
     protected:
 
