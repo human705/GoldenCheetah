@@ -115,6 +115,7 @@ class SimulatedRidersNestStats : public GcChartWindow
         void selectERGFileToOpen();
         void selectRideFileToOpen();
         void displayRouteStats();
+        bool routeMatchesWorkout();
         void SimRiderStateUpdate(SimRiderStateData srData);
 
     protected:

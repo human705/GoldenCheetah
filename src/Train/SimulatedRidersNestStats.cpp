@@ -15,7 +15,7 @@
  * with this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
-
+#pragma optimize("", off)
 #include "SimulatedRidersNestStats.h"
 #include "BicycleSim.h"
 
@@ -509,20 +509,54 @@ void SimulatedRidersNestStats::displayRouteStats() {
             endAlt = pEndPoint->alt;
             endSecs = pEndPoint->secs;
         }
-        //
-        // Validate route begin and end here
-        //
+
+        // Validate route begin, end and distance against the selected workout
+        if (context->workout)
+        {
+            geolocation routeStartGeoloc(startLat, startLon, 0);
+            geolocation workoutStartGeoloc(context->workout->Points[0].lat, context->workout->Points[0].lon, 0);
+
+            double d = routeStartGeoloc.DistanceFrom(workoutStartGeoloc);
+
+            geolocation routeEndGeoloc(endLat, endLon, 0);
+            geolocation workoutEndGeoloc(context->workout->Points[context->workout->Points.count() - 1].lat, context->workout->Points[context->workout->Points.count() - 1].lon, 0);
+
+            double startDist = abs(routeStartGeoloc.DistanceFrom(workoutStartGeoloc));
+            double endDist = abs(routeEndGeoloc.DistanceFrom(workoutEndGeoloc));
+            double diffDist = abs(context->workout->Duration - (routeDistance * 1000)); //meters
+
+            //Alert the user if any point is more than 20 meters difference
+            //or if the distance diffenrence is more than 100 meters 
+            if (abs(startDist) > 20 || abs(endDist) > 20 || abs(diffDist) > 100 ) {
+                    QMessageBox::warning(0, QString("Route vs. Workout check!"),
+                    QString("Warning!\n\nSelected route does not appear to match the workout\n" 
+                            "starting point and/or end point and/or distance.\n\n"
+                            "Starting point diff: " + QString::number(startDist, 'f', 2) + "\n"
+                            "Ending point diff: " + QString::number(endDist, 'f', 2) + "\n"
+                            "Distance diff: " + QString::number(diffDist, 'f', 2)
+                    ),
+                    QMessageBox::Ok);
+            }
+        }
+
+        if (!GlobalContext::context()->useMetricUnits) routeDistance *= MILES_PER_KM;
         routeDistanceLbl->setText(QString::number(routeDistance, 'f', 1) + ((GlobalContext::context()->useMetricUnits) ? tr(" KM") : tr(" MI")));
         double routeAvgSpeed = 0.;
         if (routeDistance > 0 && endSecs > 0) {
             routeAvgSpeed = routeDistance / (endSecs / 3600); //KPH 
         }
+
         routeAvgSpeedLbl->setText(QString::number(routeAvgSpeed, 'f', 1) + ((GlobalContext::context()->useMetricUnits) ? tr(" KPH") : tr(" MPH")));
     }
     else {
         // Show error for NULL RIDE
     }
 }
+
+bool SimulatedRidersNestStats::routeMatchesWorkout() {
+    return false;
+}
+
 
 void SimulatedRidersNestStats::start(){
     if (!this->context->workout) {
@@ -627,9 +661,6 @@ void SimulatedRidersNestStats::telemetryUpdate(RealtimeData rtd)
 {
     if (context->isRunning && !context->isPaused && localSrData.getSimRiderIsEnabled())
     {
-        //QString sValue = appsettings->cvalue(context->athlete->cyclist, GC_SIMRIDER_ENGINETYPE, "").toString();
-        //if (sValue.isEmpty()) return;
-
         if (localSrData.getSimRiderEngineType() >= 0) {
             setDisplayData(rtd, localSrData.getSimRiderEngineType());
         }
@@ -680,8 +711,6 @@ void SimulatedRidersNestStats::setDisplayData(RealtimeData rtd, int engineType) 
             header->setText("Engine NOT initialized!");
             attackStatus = " --- ";
         }
-
-
     }
     else {
         if (engineType == 1) {
@@ -752,6 +781,5 @@ void SimulatedRidersNestStats::setGridData(double vp1DisplayWatts) {
         position2Position->setText("");
         position2Status->setText("");
         position2Watts->setText("");
-
     }
 }
