@@ -19,6 +19,8 @@
 #include "SimRiderEngines.h"
 #include <QSound>
 #include <QDebug>
+#include <iostream>
+#include <vector>
 
 SimRiderEngines::SimRiderEngines(Context* context) : simRider(context) {
     engineInitialized = false;
@@ -53,6 +55,9 @@ SimRiderEngines::SimRiderEngines(Context* context) : simRider(context) {
     connect(context, SIGNAL(start()), this, SLOT(start()));
     connect(context, SIGNAL(SimRiderStateUpdate(SimRiderStateData)), this, SLOT(SimRiderStateUpdate(SimRiderStateData)));
     connect(context, SIGNAL(telemetryUpdate(RealtimeData)), this, SLOT(telemetryUpdate(RealtimeData)));
+    
+    //Unit tests
+    Test_RunAll();
 }
 
 SimRiderEngines::~SimRiderEngines() {
@@ -308,7 +313,7 @@ double SimRiderEngines::SimRiderIntervalsEngine(double inPower, double currentDi
     }
     // Not in warm up or cool down
     else {
-        if (attackCount <= attackTotal && attackCount >= 0) {
+        if (attackCount <= attackTotal && attackCount >= 0 && attackDuration > 0) {
             if (isAttacking) { //We are currently attacking
                 if (currentDistance > (currentAttackAt + attackDuration)) { // If attack is finished reset power.
                     isAttacking = false;
@@ -316,16 +321,16 @@ double SimRiderEngines::SimRiderIntervalsEngine(double inPower, double currentDi
                     QSound::play(":audio/lap.wav");
                 }
                 else { // Maintain attack power or wait for the athlete to catch up
-                    outPower = setIntervalsAIAttackFields(distDiff, inPower, total_msecs);
+                    outPower = setIntervalsAIAttackFields(distDiff, inPower);
                 }
             }
             else {  // Not attacking, pace the user until next attack point or initiate an attack
                 if (currentDistance < nextAttackAt) { // Waiting for next attack point
-                    outPower = setIntervalsAIPacingFields(distDiff, inPower, total_msecs);
+                    outPower = setIntervalsAIPacingFields(distDiff, inPower);
                 }
                 else { // Intiate the attack
                     initNewAtttackForIntervalsAI(inPower);
-                    outPower = setIntervalsAIAttackFields(distDiff, inPower, total_msecs);
+                    outPower = setIntervalsAIAttackFields(distDiff, inPower);
                     QSound::play(":audio/lap.wav");
                 }
             }
@@ -349,7 +354,7 @@ void SimRiderEngines::initNewAtttackForIntervalsAI(double inPower) {
 }
 
 // Calculate outPower while pacing based on inPower, and distance between VP and the athlete
-double SimRiderEngines::setIntervalsAIPacingFields(double distDiff, double inPower, long total_msecs) {
+double SimRiderEngines::setIntervalsAIPacingFields(double distDiff, double inPower) {
     double outPower = 0.;
 
     setMaxSeparationLimit(distDiff);
@@ -397,7 +402,7 @@ void SimRiderEngines::setMaxSeparationLimit(double distDiff) {
 }
 
 // Calculate outPower during an attack based on inPower, and distance between VP and the athlete
-double SimRiderEngines::setIntervalsAIAttackFields(double distDiff, double inPower, long total_msecs) {
+double SimRiderEngines::setIntervalsAIAttackFields(double distDiff, double inPower) {
     double outPower = 0.;
 
     setMaxSeparationLimit(distDiff);
@@ -461,7 +466,7 @@ void SimRiderEngines::initializeIntervalsNextAttack() {
     }
 }
 
-// Initialize values for a new ride. Some of these values need to be moved to the settings file
+// Initialize engine for a new ride. 
 void SimRiderEngines::initializeIntervalsEngine(double rideDuration, 
     QString warmup, 
     QString cooldown, 
@@ -470,8 +475,8 @@ void SimRiderEngines::initializeIntervalsEngine(double rideDuration,
     QString increase, 
     QString maxSeparation) {
 
-    attackCount = 0; //Initialize count for attack point calculations
-    
+    double pctWarmUp = 0., pctCoolDown = 0.;
+
     if (warmup == "" || warmup == "0" ) {
         warmUpEnds = 0;
     }
@@ -500,8 +505,8 @@ void SimRiderEngines::initializeIntervalsEngine(double rideDuration,
         pacingInterval = 0;
     }
     else {
-        double pctWarmUp = warmup.toDouble() / 100;
-        double pctCoolDown = cooldown.toDouble() / 100;
+        pctWarmUp = warmup.toDouble() / 100;
+        pctCoolDown = cooldown.toDouble() / 100;
         pacingInterval = (rideDuration * (1 - (pctWarmUp + pctCoolDown))) / attackTotal;
     }
     
@@ -524,24 +529,30 @@ void SimRiderEngines::initializeIntervalsEngine(double rideDuration,
     maxSeparationLimit = maxSeparation.toInt();
     savedMaxSeparationLimit = maxSeparationLimit;
 
-    buildAttackPointsList(attackTotal, rideDuration);
-    currentAttackAt = attackLocationList.at(0);
-    nextAttackAt = currentAttackAt;
-    isAttacking = false;
-    engineInitialized = true;
-    prevRouteDistance = 0; // Save state so we'll know if the user jumped
-
-    if (attackDuration >= (pacingInterval * 0.9)) {
-        QString s = "Attack duration is set to " + QString::number(attackDuration) +" but it should be less than " +QString::number((pacingInterval * 0.9)) + ". " +
-            "Virtual partner engine will not initialize!";
-
+    if (attackTotal > 0) {
+        buildAttackPointsList(attackTotal, rideDuration);
+        currentAttackAt = attackLocationList.at(0);
+        nextAttackAt = currentAttackAt;
+        isAttacking = false;
+        engineInitialized = true;
+        prevRouteDistance = 0; // Save state so we'll know if the user jumped
+        attkDurationPct = (1 - (pctWarmUp + pctCoolDown));
+        if (attackDuration > (pacingInterval * attkDurationPct)) {
+            attackDuration = pacingInterval * 0.9;
+        }
+    }
+    else {
+        currentAttackAt = 0;
+        nextAttackAt = 0;
+        isAttacking = false;
         engineInitialized = false;
-        qDebug() << "Virtual Partner: " + s;
+        prevRouteDistance = 0; // Save state so we'll know if the user jumped
+        attackDuration = 0;
+        attackTotal = -1;
     }
 }
 
-int SimRiderEngines::getNextAttack() 
-{
+int SimRiderEngines::getNextAttack() {
     return nextAttackAt;
 }
 
@@ -553,13 +564,21 @@ void SimRiderEngines::buildAttackPointsList(int numOfAttacks, double rideDuratio
         srand((unsigned int)time(NULL));
         if (ctr == 0) {
             // Random first attack point after warmup ends and during the attack eligable part of the ride
-            currentAttackAt = warmUpEnds + (pacingInterval / 2) + rand() % (int)(pacingInterval / numOfAttacks);
+            if (pacingInterval / numOfAttacks > 1) {
+                currentAttackAt = warmUpEnds + (pacingInterval / 2) + rand() % (int)(pacingInterval / numOfAttacks);
+            } else {
+                currentAttackAt = warmUpEnds + (pacingInterval / 2) + rand() % 2;
+            }
             nextAttackAt = currentAttackAt;
             attackLocationList.push_back(nextAttackAt);
         }
         else {
-            //srand((unsigned int)time(NULL));
-            nextAttackAt = warmUpEnds + (pacingInterval / 2) + (ctr * pacingInterval) + rand() % (int)(pacingInterval / ctr);
+            if (pacingInterval / ctr > 1) {
+                nextAttackAt = warmUpEnds + (pacingInterval / 2) + (ctr * pacingInterval) + rand() % (int)(pacingInterval / ctr);
+            }
+            else {
+                nextAttackAt = warmUpEnds + (pacingInterval / 2) + (ctr * pacingInterval) + rand() % 2;
+            }
             attackLocationList.push_back(nextAttackAt);
         }
         ctr++;
@@ -672,4 +691,72 @@ void SimRiderEngines::setSimRiderRouteDistance(double d)
 double SimRiderEngines::getSimRiderRouteDistance()
 {
     return simRider.Distance();
+}
+
+
+
+// Unit TESTS
+
+void SimRiderEngines::Test_RunAll() {
+    //rideDuration(meters),warmup%,cooldown%,attacks(int),duration(meters),increase(Watts),maxSeparation(meters), engineDisabled
+    std::vector<std::vector<QString> > testCases = {
+    { "13948" , "5"   , "0"   , "10"   , "30"  , "50"  , "20"  , "false"},
+    { "13948" , "0"   , "0"   , "50"   , "30"  , "50"  , "20"  , "false" },
+    { "13948" , "25"  , "25"  , "100"  , "30"  , "50"  , "20"  , "false" },
+    { "13948" , "5"   , "0"   , "150"  , "0"   , "50"  , "20"  , "false" },
+    { "0"     , "5"   , "0"   , "200"  , "30"  , "50"  , "20"  , "false" },                  // Ride has 0 duration. Should not break the app
+    { "13948" , "5"   , "0"   , "0"    , "30"  , "50"  , "20"  , "true" },                  // Attack 0. Should disable the engine
+    { "13948" , "5"   , "0"   , "300"  , "50"  , "50"  , "20"  , "false"},
+    { "13948" , "5"   , "0"   , "350"  , "50"  , "50"  , "20"  , "false"},
+    { "13948" , "5"   , "0"   , "400"  , "50"  , "50"  , "20"  , "false"},
+    { "13948" , "5"   , "0"   , "450"  , "50"  , "50"  , "20"  , "false"},
+    { "13948" , "5"   , "0"   , "500"  , "50"  , "50"  , "20"  , "false"},
+    { "13948" , "5"   , "0"   , "550"  , "50"  , "50"  , "20"  , "false"}
+    };
+
+    std::string s = "";
+
+    // Test Init Itervals engine
+    //qDebug() << "TESTING --- initializeIntervalsEngine";
+    for (int i = 0; i < testCases.size(); i++) {
+        initializeIntervalsEngine(testCases[i][0].toDouble(), testCases[i][1], testCases[i][2], testCases[i][3], testCases[i][4], testCases[i][5], testCases[i][6]);
+        if (attackDuration <= (pacingInterval * attkDurationPct) ) {
+            //qDebug() << "SUCCESS *** Attack Duration:" + QString::number(attackDuration)+ " <= Pacing Interval: " + QString::number(pacingInterval * attkDurationPct) + " ==> for row = " + QString::number(i) + "\n\n";
+            std::cout << "SUCCESS *** Attack Duration:" << attackDuration << " <= Pacing Interval: " << (pacingInterval * attkDurationPct) << " ==> for row = " << i << "\n";
+        }
+        else {
+            //qDebug() << += "FAILED *** Attack Duration:" + QString::number(attackDuration) + " !< Pacing Interval: " + QString::number(pacingInterval * attkDurationPct) + " ==> for row = " + QString::number(i) + "\n\n";;
+        }
+
+
+    }
+
+
+
+
+
+
+
+    //Print out test message
+    //qDebug() << s;
+    //std::cout << "POLYFIT y = 4 * x ^ 5 + 3 x ^ 2 + 2 x + 7" << std::endl;
+    //std::cout << s;
+
+
+    // INitialize values after tests
+    attackStatus = "NOT STARTED";
+    workoutFinished = true;
+    isAttacking = false;
+
+    nextAttackAt = -1;
+    attackCount = -1;
+    vLat = -999.;
+    vLon = -999.;
+    vAlt = -999.;
+    vDist = -999.;
+    vWatts = -999.;
+    engineType = 0;
+    savedTimer = 0.;
+    savedPower = 0.;
+
 }

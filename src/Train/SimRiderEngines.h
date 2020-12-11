@@ -40,19 +40,18 @@ public:
     void runEngines(Context* context, double displayWorkoutDistance, double curWatts, long total_msecs);
     void updateSimRiderData();
     void initializeIntervalsEngine(double rideDuration, QString warmup, QString cooldown, 
-        QString attacks, QString duration, QString increase, QString maxSeparation);
+    QString attacks, QString duration, QString increase, QString maxSeparation);
     void initializeIntervalsNextAttack();
     void reCalculateAttackPoints( double currentRouteDistance);
     int getNextAttack();
-
     void buildAttackPointsList(int numOfAttacks, double rideDuration);
 
     //Sim Rider Intervals Engine
     double SimRiderIntervalsEngine(double inPower, double currentDistance, double distDiff, long total_msecs);
     void initNewAtttackForIntervalsAI(double inPower);
-    double setIntervalsAIPacingFields(double distDiff, double inPower, long total_msecs);
+    double setIntervalsAIPacingFields(double distDiff, double inPower);
     void setMaxSeparationLimit(double distDiff);
-    double setIntervalsAIAttackFields(double distDiff, double inPower, long total_msecs);
+    double setIntervalsAIAttackFields(double distDiff, double inPower);
     
     double getLocationAtIndex(int index, int limit);
     void setIntAIattackCount(int i);
@@ -88,6 +87,10 @@ public:
     double getDist() { return vDist; };
     double getWatts() { return vWatts; };
 
+    //Unit TESTS
+    void Test_RunAll();
+
+
 private slots:
     void stop();
     void start();
@@ -118,6 +121,7 @@ private:
     SimRiderStateData srData;
     //ErgFile* curErgFile;
     //double workoutDuration;
+    double attkDurationPct = 0.; // % of the ride that attacks will occur = Duration - (warmup + cooldown)
     double vLat, vLon, vAlt, vDist, vWatts;
     long savedTimer;
     double savedPower;

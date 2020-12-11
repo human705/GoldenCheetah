@@ -680,6 +680,23 @@ void SimulatedRidersNestStats::telemetryUpdate(RealtimeData rtd)
 }
 
 void SimulatedRidersNestStats::SimRiderStateUpdate(SimRiderStateData srData) {
+
+    //localSrData.setSimRiderIsEngineInitialized(srData.getSimRiderIsEngineInitialized()); 
+    //localSrData.setSimRiderIsEnabled(srData.getSimRiderIsEnabled());                         
+    //localSrData.setSimRiderAttackStatus(srData.getSimRiderAttackStatus());
+    //localSrData.setSimRiderIsWorkoutFinished(srData.getSimRiderIsWorkoutFinished()); 
+    //localSrData.setSimRiderIsAttacking(srData.getSimRiderIsAttacking());             
+
+    //localSrData.setSimRiderNextAttack(srData.getSimRiderNextAttack());             
+    //localSrData.setSimRiderAttackCount(srData.getSimRiderAttackCount());            
+    //localSrData.setSimRiderLat(srData.getSimRiderLat());
+    //localSrData.setSimRiderLon(srData.getSimRiderLon()); 
+    //localSrData.setSimRiderAlt(srData.getSimRiderAlt());
+    //localSrData.setSimRiderDist(srData.getSimRiderDist());
+    //localSrData.setSimRiderWatts(srData.getSimRiderWatts());
+
+    //localSrData.setSimRiderEngineType(srData.getSimRiderEngineType());
+
     localSrData = srData;
 }
 
