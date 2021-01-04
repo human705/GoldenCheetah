@@ -112,11 +112,94 @@ extern "C" {
 // QT stuff etc
 #include <QtGui>
 #include <QTimer>
+#include <QMutex>
 #include "Context.h"
 #include "DeviceConfiguration.h"
 #include "DeviceTypes.h"
 #include "RealtimeData.h"
 #include "TrainSidebar.h"
+
+#include <mutex>
+#include <thread>
+#include <future>
+
+// Class to perform ordered async execution of functions.
+// - Async dispatch do not block and cannot return a value
+// - Syncronous dispatch function can return a value but must block
+//   until all pending work is complete.
+//
+// This class is used to wrap all interactions with VLC.
+//
+// VLC, QT, Slow Disc, High Latency Video Decode, and Widgets don't play nicely
+// together and common result is that vlc hangs when stop is called because it
+// cannot obtain access to the render surface. This is not a vlc bug, it seems
+// to have something to do with how widgets are dispatched by qt.
+//
+// It appears the problem can be avoided if we never call vlc stop from the gui
+// thread. The ordered dispatch exists to ensure all operations occur in-order,
+// even if they are running in seprate threads.
+class OrderedAsync {
+    std::mutex        m_lock;
+    std::future<void> m_fut;  // latest future (only read or write when holding lock.
+
+    static void CallAfterFuture(std::future<void> fut, std::function<void()> fn) {
+        if (fut.valid())
+            fut.get();
+
+        (fn)(); // invoke lambda
+    }
+
+public:
+
+    // Future constructed with valid() == false.
+    OrderedAsync() {}
+
+    ~OrderedAsync() {
+        Drain();
+    }
+
+    void Drain() {
+        m_lock.lock();
+
+        // If no pending work then nothing to drain
+        if (!m_fut.valid()) {
+            m_lock.unlock();
+            return;
+        }
+
+        // Otherwise there is work to drain
+        std::future<void> fut = std::move(m_fut); // copy latest future
+        m_fut = std::future<void>();              // set latest future to empty
+        m_lock.unlock();                          // leave lock
+
+        fut.get();                                // wait on future
+    }
+
+    // Syncronous calls execute after all pending work and may return any type.
+    template<typename T_RET> T_RET SyncCall(std::function<T_RET()> fn) {
+
+        Drain();
+
+        return (fn)();
+    }
+
+    // Async calls must return void.
+    void AsyncCall(std::function<void()> fn) {
+
+        std::packaged_task<void(std::future<void> fut, std::function<void()>)> tsk(CallAfterFuture);
+        std::future<void> newFut = tsk.get_future();
+
+        m_lock.lock();
+
+        std::thread th(std::move(tsk), std::move(m_fut), std::move(fn));
+        m_fut = std::move(newFut);
+
+        m_lock.unlock();
+
+        th.detach();
+    }
+};
+
 
 // regardless we always have a media helper
 class MediaHelper
@@ -165,6 +248,7 @@ class VideoWindow : public GcChartWindow
         void telemetryUpdate(RealtimeData rtd);
         void seekPlayback(long ms);
         void mediaSelected(QString filename);
+        bool hasActiveVideo() const;
 
     protected:
 
@@ -200,12 +284,14 @@ class VideoWindow : public GcChartWindow
         void showMeters();
 
 #ifdef GC_VIDEO_VLC
-
         // vlc for older QT
         libvlc_instance_t * inst;
         //libvlc_exception_t exceptions;
         libvlc_media_player_t *mp;
         libvlc_media_t *m;
+
+        // Calls to libvlc are made via OrderedASync
+        mutable OrderedAsync vlcDispatch;
 #endif
 
 #ifdef GC_VIDEO_QT5
@@ -218,6 +304,11 @@ class VideoWindow : public GcChartWindow
         QWidget *container;
         QComboBox *layoutSelector;
         QPushButton *resetLayoutBtn;
+
+        enum PlaybackState { None, Playing, Paused };
+
+        PlaybackState state;
+        mutable QRecursiveMutex stateLock;
 
         bool init; // we initialised ok ?
 };

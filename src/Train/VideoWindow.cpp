@@ -27,6 +27,14 @@
 #include "MeterWidget.h"
 #include "VideoLayoutParser.h"
 
+class Lock
+{
+    QRecursiveMutex& mutex;
+public:
+    Lock(QRecursiveMutex& m) : mutex(m) { mutex.lock(); }
+    ~Lock() { mutex.unlock(); }
+};
+
 VideoWindow::VideoWindow(Context *context)  :
     GcChartWindow(context), context(context), m_MediaChanged(false), layoutSelector(NULL)
 {
@@ -40,6 +48,8 @@ VideoWindow::VideoWindow(Context *context)  :
     videoSyncTimeAdjustFactor = 1.;
 
     curPosition = 1;
+
+    state = PlaybackState::None;
 
     init = true; // assume initialisation was ok ...
 
@@ -166,20 +176,43 @@ VideoWindow::~VideoWindow()
     // VLC
 
     /* No need to keep the media now */
-    if (m) libvlc_media_release (m);
+    if (m) vlcDispatch.AsyncCall([m{this->m}]() {libvlc_media_release(m); });
 
     /* nor the player */
-    libvlc_media_player_release (mp);
+    vlcDispatch.AsyncCall([mp{this->mp}]() {libvlc_media_player_release(mp); });
 
     // unload vlc
-    libvlc_release (inst);
+    vlcDispatch.AsyncCall([inst{this->inst}]() {libvlc_release(inst); });
 #endif
+
+    vlcDispatch.Drain();
 
 #ifdef GC_VIDEO_QT5
     // QT MEDIA
     delete mp;
     delete wd;
 #endif
+}
+
+// Note: This method should only be called under state lock.
+bool VideoWindow::hasActiveVideo() const
+{
+    if (state == PlaybackState::None)
+        return false;
+
+#ifdef GC_VIDEO_VLC
+    switch (vlcDispatch.SyncCall<libvlc_state_t>([mp{this->mp}]() {return libvlc_media_player_get_state(mp);})) {
+    case libvlc_Playing:
+    case libvlc_Paused:
+        return true;
+    }
+#endif
+#ifdef GC_VIDEO_QT5
+    if (LoadedMedia == mp->mediaStatus())
+        return true;
+#endif
+
+    return false;
 }
 
 void VideoWindow::layoutChanged()
@@ -226,7 +259,6 @@ void VideoWindow::readVideoLayout(int pos, bool useDefault)
         handler.layoutPositionSelected = pos;
         reader.setContentHandler(&handler);
         reader.parse(source);
-        if(context->isRunning) showMeters();
     }
     else
     {
@@ -250,6 +282,10 @@ void VideoWindow::showMeters()
 
 void VideoWindow::resizeEvent(QResizeEvent * )
 {
+    Lock lock(stateLock);
+    if (!hasActiveVideo())
+        return;
+
     foreach(MeterWidget* p_meterWidget , m_metersWidget)
         p_meterWidget->AdjustSizePos();
     prevPosition = mapToGlobal(pos());
@@ -265,24 +301,29 @@ VideoSyncFilePoint VideoWindow::VideoSyncPointAdjust(const VideoSyncFilePoint& v
 
 void VideoWindow::startPlayback()
 {
+    Lock lock(stateLock);
+
 #ifdef GC_VIDEO_VLC
     if (!m) return; // ignore if no media selected
 
     // stop playback & wipe player
-    libvlc_media_player_stop (mp);
+    vlcDispatch.AsyncCall([mp{ this->mp }](){libvlc_media_player_stop(mp); });
+#endif
 
+#ifdef GC_VIDEO_VLC
     /* set the media to playback */
-    libvlc_media_player_set_media (mp, m);
+    vlcDispatch.AsyncCall([mp{ this->mp }, m{ this->m }](){libvlc_media_player_set_media(mp, m); });
 
     /* Reset playback rate */
     /* If video speed will be controlled by a sync file, set almost stationary
        until first telemetry update. Otherwise (re)set to normal rate */
+    float rate = 1.0f;
     if (context->currentVideoSyncFile() && context->currentVideoSyncFile()->Points.count() > 1)
-        libvlc_media_player_set_rate(mp, 0.1f);
-    else libvlc_media_player_set_rate(mp, 1.0f);
+        rate = 0.1f;
+    vlcDispatch.AsyncCall([mp{ this->mp }, rate](){libvlc_media_player_set_rate(mp, rate); });
 
     /* play the media_player */
-    libvlc_media_player_play (mp);
+    vlcDispatch.AsyncCall([mp{ this->mp }] () { libvlc_media_player_play(mp); });
 
     m_MediaChanged = false;
 #endif
@@ -335,7 +376,7 @@ void VideoWindow::startPlayback()
 #ifdef GC_VIDEO_VLC
         double videoSyncFrameRate = currentVideoSyncFile->VideoFrameRate;
         if (videoSyncFrameRate > 0.) {
-            double mediaFrameRate = libvlc_media_player_get_fps(mp);
+            double mediaFrameRate = vlcDispatch.SyncCall<double>([mp{ this->mp }] () { return libvlc_media_player_get_fps(mp); });
             if (mediaFrameRate > 0.) {
                 videoSyncTimeAdjustFactor = videoSyncFrameRate / mediaFrameRate;
             }
@@ -353,37 +394,68 @@ void VideoWindow::startPlayback()
 #endif
     }
 
+    state = PlaybackState::Playing;
 
     showMeters();
 }
 
 void VideoWindow::stopPlayback()
 {
+    Lock lock(stateLock);
+
+    // Widget communication... its very important that all widgets
+    // are done and do not try to paint after 'the stop' has begun.
+    // QT paints on a different thread from widget paint method, so
+    // we must get acknowledgement from all widgets that someone has
+    // attempted to paint after stop was seen. If we don't see that
+    // we must assume qt is still painting a widget.
+
+    // Careful notification process:
+
+    // 1.) If we havent started playback then do nothing here.
+    if (state == PlaybackState::None)
+        return;
+
+    // 2.) Let everyone know we're now officially not running,
+    //     even before we actually call video stop.
+    state = PlaybackState::None;
+
+    // 3.) Tell all the widgets to stop, and tell them to hide.
+    //     The hide means they will no longer see paint.
+
+    // We do this stuff before calling stop, because stop is a
+    // synchronous operation that expects to be able to tear
+    // down decoder and its resources.
+    foreach(MeterWidget * p_meterWidget, m_metersWidget) {
+        p_meterWidget->stopPlayback();
+        p_meterWidget->hide();
+    }
 
 #ifdef GC_VIDEO_VLC
     if (!m) return; // ignore if no media selected
 
     // stop playback & wipe player
-    libvlc_media_player_stop (mp);
+    vlcDispatch.AsyncCall([mp{ this->mp }]{ libvlc_media_player_stop(mp); });
 #endif
 
 #ifdef GC_VIDEO_QT5
     mp->stop();
 #endif
-
-    foreach(MeterWidget * p_meterWidget, m_metersWidget) {
-        p_meterWidget->stopPlayback();
-        p_meterWidget->hide();
-    }
 }
 
 void VideoWindow::pausePlayback()
 {
+    Lock lock(stateLock);
+    if (!hasActiveVideo())
+        return;
+
+    state = PlaybackState::Paused;
+
 #ifdef GC_VIDEO_VLC
     if (!m) return; // ignore if no media selected
 
     // stop playback & wipe player
-    libvlc_media_player_set_pause(mp, true);
+    vlcDispatch.AsyncCall([mp{ this->mp }]{libvlc_media_player_set_pause(mp, true); });
 #endif
 
 #ifdef GC_VIDEO_QT5
@@ -393,6 +465,10 @@ void VideoWindow::pausePlayback()
 
 void VideoWindow::resumePlayback()
 {
+    Lock lock(stateLock);
+    if (!hasActiveVideo())
+        return;
+
 #ifdef GC_VIDEO_VLC
     if (!m) return; // ignore if no media selected
 
@@ -400,16 +476,22 @@ void VideoWindow::resumePlayback()
     if(m_MediaChanged)
         startPlayback();
     else
-        libvlc_media_player_set_pause(mp, false);
+        vlcDispatch.AsyncCall([mp{ this->mp }]{libvlc_media_player_set_pause(mp, false); });
 #endif
 
 #ifdef GC_VIDEO_QT5
     mp->play();
 #endif
+
+    state = PlaybackState::Playing;
 }
 
 void VideoWindow::telemetryUpdate(RealtimeData rtd)
 {
+    Lock lock(stateLock);
+    if (!hasActiveVideo())
+        return;
+
     bool metric = GlobalContext::context()->useMetricUnits;
 
     foreach(MeterWidget* p_meterWidget , m_metersWidget)
@@ -481,14 +563,9 @@ void VideoWindow::telemetryUpdate(RealtimeData rtd)
                 // show/plot or hide depending on existance of valid location
                 // data, only when there is a video to play
                 geolocation geo(dLat, dLon, dAlt);
-                if (m && geo.IsReasonableGeoLocation())
+                if (geo.IsReasonableGeoLocation())
                 {
                     liveMapWidget->plotNewLatLng(dLat, dLon);
-                    liveMapWidget->show();
-                }
-                else
-                {
-                    liveMapWidget->hide();
                 }
             }
         }
@@ -605,7 +682,7 @@ void VideoWindow::telemetryUpdate(RealtimeData rtd)
 #endif
 
 #ifdef GC_VIDEO_VLC
-    if (!m || !context->isRunning || context->isPaused)
+    if (PlaybackState::Playing != state)
         return;
 
     // find the curPosition
@@ -671,7 +748,7 @@ void VideoWindow::telemetryUpdate(RealtimeData rtd)
         // set video rate ( theoretical : video rate = training speed / ghost speed)
         float rate;
         float video_time_shift_ms;
-        video_time_shift_ms = (rfp.secs*1000.0 - (double) libvlc_media_player_get_time(mp));
+        video_time_shift_ms = (rfp.secs * 1000.0 - vlcDispatch.SyncCall<double>([mp{ this->mp }]{ return libvlc_media_player_get_time(mp); }));
         if (rfp.kph == 0.0)
             rate = 1.0;
         else
@@ -680,19 +757,19 @@ void VideoWindow::telemetryUpdate(RealtimeData rtd)
         //if video is far (empiric) from ghost:
         if (fabs(video_time_shift_ms) > 5000)
         {
-            libvlc_media_player_set_time(mp, (libvlc_time_t) (rfp.secs*1000.0));
+            vlcDispatch.AsyncCall([mp{ this->mp }, rfp_secs{ rfp.secs }]{ libvlc_media_player_set_time(mp, (libvlc_time_t)(rfp_secs * 1000.0)); });
         }
         else {
             // otherwise add "small" empiric corrective parameter to get video back to ghost position:
             rate *= 1.0 + (video_time_shift_ms / 10000.0);
         }
 
-        libvlc_media_player_set_pause(mp, (rate < 0.01));
+        vlcDispatch.AsyncCall([mp{ this->mp }, rate]{ libvlc_media_player_set_pause(mp, (rate < 0.01)); });
 
         // change video rate but only if there is a significant change
         if ((rate != 0.0) && (fabs((rate - currentVideoRate) / rate) > 0.05))
         {
-            libvlc_media_player_set_rate(mp, rate );
+            vlcDispatch.AsyncCall([mp{ this->mp }, rate]{ libvlc_media_player_set_rate(mp, rate); });
             currentVideoRate = rate;
         }
     }
@@ -707,6 +784,10 @@ void VideoWindow::telemetryUpdate(RealtimeData rtd)
 
 void VideoWindow::seekPlayback(long ms)
 {
+    Lock lock(stateLock);
+    if (!hasActiveVideo())
+        return;
+
 #ifdef GC_VIDEO_NONE
     Q_UNUSED(ms)
 #endif
@@ -722,7 +803,7 @@ void VideoWindow::seekPlayback(long ms)
     else
     {
         // seek to ms position in current file
-        libvlc_media_player_set_time(mp, (libvlc_time_t) ms);
+        vlcDispatch.AsyncCall([mp{ this->mp }, ms]{ libvlc_media_player_set_time(mp, (libvlc_time_t)ms); });
     }
 #endif
 
@@ -745,7 +826,7 @@ void VideoWindow::mediaSelected(QString filename)
     stopPlayback();
 
     // release whatever is already loaded
-    if (m) libvlc_media_release(m);
+    if (m) vlcDispatch.AsyncCall([m{ this->m }]{ libvlc_media_release(m); });
     m = NULL;
 
     if (filename.endsWith("/DVD") || (filename != "" && QFile(filename).exists())) {
@@ -758,12 +839,14 @@ void VideoWindow::mediaSelected(QString filename)
         // A Windows "c:\xyz\abc def.avi" filename should become file:///c:/xyz/abc%20def.avi
         QString fileURL = "file:///" + filename.replace("\\", "/");
 #endif
+
         //qDebug()<<"file url="<<fileURL;
         /* open media */
-        m = libvlc_media_new_location(inst, filename.endsWith("/DVD") ? "dvd://" : fileURL.toLocal8Bit());
+        std::string loc = filename.endsWith("/DVD") ? "dvd://" : fileURL.toLocal8Bit().constData();
+        m = vlcDispatch.SyncCall<libvlc_media_t*>([inst{ this->inst }, loc]{ return libvlc_media_new_location(inst, loc.c_str()); });
 
         /* set the media to playback */
-        if (m) libvlc_media_player_set_media (mp, m);
+        if (m) vlcDispatch.AsyncCall([mp{ this->mp }, m{ this->m }]{ libvlc_media_player_set_media(mp, m); });
 
         m_MediaChanged = true;
     }
