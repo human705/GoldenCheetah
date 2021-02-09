@@ -34,7 +34,8 @@
 // You can then add it to gcconfig.pri
 
 #ifndef GC_MAPQUESTAPI_KEY 
-#define GC_MAPQUESTAPI_KEY "Fmjtd%7Cluur20uznu%2Ca2%3Do5-9ayshw"
+//#define GC_MAPQUESTAPI_KEY "Fmjtd%7Cluur20uznu%2Ca2%3Do5-9ayshw"
+#define GC_MAPQUESTAPI_KEY "1Mq9tTHfmHCPKEZG9CkwCL3jhkDJsnI8"
 #endif
 
 struct elevationGPSPoint {
